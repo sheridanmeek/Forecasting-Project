@@ -1,0 +1,160 @@
+---
+title: "Forecasting Project"
+author: "Sheridan Meek"
+date: "`r format(Sys.Date(),'%B %d, %Y')`"
+output: 
+  html_document:
+    df_print: paged
+    code_folding: "hide"
+    toc: yes
+    fig_caption: no
+    theme: cerulean
+    toc_float: no
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+rm(list=ls())
+graphics.off()
+```
+
+```{r loadPackages, include=FALSE, message=FALSE}
+require(fpp3)
+require(tidyquant)
+require(stargazer)
+require(kableExtra)
+require(fma)
+require(reshape2)
+```
+
+# Selecting Indicators
+
+  Inflation is an important indicator of the economic climate of a nation. The ability to anticipate future inflation assists in not only monetary decisions made at the government level, but the practices of businesses and individuals. Forecasting inflation has been historically difficult, due especially to unanticipated shocks to the economy. The most recent example is the COVID-19 pandemic. Despite these challenges, it is important to continue to take what has happened in the economy in the past and do what we can to forecast its future. 
+  
+  To develop this particular forecast, we are utilizing 5 variables, observed since 1982. The first variable is the PCEPI – the Personal Consumption Expenditures Price Index. This measure is used to calculate the inflation. Unemployment rate, the 1-year expected inflation, industrial production for manufacturing and the total industrial production index will be used as potential indicators of future inflation. 
+  
+  The unemployment rate has historically had an inverse relationship with the inflation rate – when unemployment is low, the inflation rate is high, and vice versa. While the direction of this relationship is consistent, the relevancy of the unemployment rate as a predictor depends on the strength of the relationship.
+  
+  The 1-year expected inflation rate seems at first glance to be an obvious choice for a relevant indicator of future inflation – but that might not be the case. As previously mentioned, economic shocks cause changes in the inflation rate that cannot be accounted for by expectations. However, expected inflation can play a significant role in actual future inflation because the government, businesses and individuals might take the expected inflation into account when making purchasing decisions.
+ 
+  We are including both the industrial production for manufacturing index and the total industrial production index because production is closely tied to consumption, which in turn is closely tied to inflation. We would expect that increased levels of production would be associated with increased inflation. 
+  
+  Each of these variables may contribute information that could assist in forecasting, so in addition to fitting models based on unemployment rate, expected inflation and both types of industrial production, we will fit a model that is an average of all four of these variables. 
+
+```{r get data}
+VarList <- c("PCEPI", "UNRATE", "EXPINF1YR", "IPMAN", "INDPRO")
+fred_data <- tq_get(VarList,get="economic.data",from="1982-01-01") %>%
+  mutate(Month = yearmonth(date), value = price) %>% 
+  select(-c(date,price)) %>% 
+  as_tsibble(index = Month, key = symbol) %>%
+  pivot_wider(names_from = symbol, values_from = value)
+```
+
+```{r transforming variables}
+my_vars <- fred_data %>% select(c(PCEPI, UNRATE, EXPINF1YR, IPMAN, INDPRO)) %>%
+  mutate(infl = 1200*log(PCEPI/lag(PCEPI))) %>% 
+  mutate(dinfl = infl - lag(infl,1)) %>% 
+  mutate(dinfl12 = 100*log(PCEPI/lag(PCEPI,12)) - lag(infl,12)) %>% 
+  mutate(unrate = UNRATE - lag(UNRATE)) %>% 
+  mutate(expinf1yr = EXPINF1YR - lag(EXPINF1YR)) %>% 
+  mutate(ipman = 1200*log(IPMAN/lag(IPMAN))) %>%
+  mutate(indpro = 100*log(INDPRO/lag(INDPRO))) %>% 
+  select(-c(PCEPI, UNRATE, EXPINF1YR, IPMAN, INDPRO)) %>% 
+  drop_na()
+train_data <- my_vars %>% filter_index(~ "2019-12")
+test_data <- my_vars %>% filter_index("2020-01" ~ .)
+```
+
+```{r checking units, include=FALSE}
+my_varsm <- melt(my_vars, "Month")
+ggplot(my_varsm, aes(Month, value)) + 
+  geom_line() + 
+  facet_wrap(~variable, scales = "free", ncol = 2)
+```
+
+```{r fitting models, results = "hide"}
+fitPC <- train_data %>% 
+  model(
+    mUNRATE = TSLM(dinfl12 ~ 1 +
+                 lag(dinfl,12) + lag(dinfl,13) + lag(dinfl,14) +
+                 lag(dinfl,15) + lag(dinfl,16) + lag(dinfl,17) +
+                 lag(dinfl,18) + lag(dinfl,19) + lag(dinfl,20) +
+                 lag(dinfl,21) + lag(dinfl,22) + lag(dinfl,23) +
+                 lag(unrate,12) + lag(unrate,13) + lag(unrate,14) +
+                 lag(unrate,15) + lag(unrate,16) + lag(unrate,17) +
+                 lag(unrate,18) + lag(unrate,19) + lag(unrate,20) +
+                 lag(unrate,21) + lag(unrate,22) + lag(unrate,23)), 
+                 
+   mEXPINF1YR = TSLM(dinfl12 ~ 1 +
+                 lag(dinfl,12) + lag(dinfl,13) + lag(dinfl,14) +
+                 lag(dinfl,15) + lag(dinfl,16) + lag(dinfl,17) +
+                 lag(dinfl,18) + lag(dinfl,19) + lag(dinfl,20) +
+                 lag(dinfl,21) + lag(dinfl,22) + lag(dinfl,23) +
+                 lag(expinf1yr,12) + lag(expinf1yr,13) + lag(expinf1yr,14) +
+                 lag(expinf1yr,15) + lag(expinf1yr,16) + lag(expinf1yr,17) +
+                 lag(expinf1yr,18) + lag(expinf1yr,19) + lag(expinf1yr,20) +
+                 lag(expinf1yr,21) + lag(expinf1yr,22) + lag(expinf1yr,23)),
+   
+   mIPMAN = TSLM(dinfl12 ~ 1 +
+                 lag(dinfl,12) + lag(dinfl,13) + lag(dinfl,14) +
+                 lag(dinfl,15) + lag(dinfl,16) + lag(dinfl,17) +
+                 lag(dinfl,18) + lag(dinfl,19) + lag(dinfl,20) +
+                 lag(dinfl,21) + lag(dinfl,22) + lag(dinfl,23) +
+                 lag(ipman,12) + lag(ipman,13) + lag(ipman,14) +
+                 lag(ipman,15) + lag(ipman,16) + lag(ipman,17) +
+                 lag(ipman,18) + lag(ipman,19) + lag(ipman,20) +
+                 lag(ipman,21) + lag(ipman,22) + lag(ipman,23)), 
+   
+  mINDPRO = TSLM(dinfl12 ~ 1 +
+                 lag(dinfl,12) + lag(dinfl,13) + lag(dinfl,14) +
+                 lag(dinfl,15) + lag(dinfl,16) + lag(dinfl,17) +
+                 lag(dinfl,18) + lag(dinfl,19) + lag(dinfl,20) +
+                 lag(dinfl,21) + lag(dinfl,22) + lag(dinfl,23) +
+                 lag(indpro,12) + lag(indpro,13) + lag(indpro,14) +
+                 lag(indpro,15) + lag(indpro,16) + lag(indpro,17) +
+                 lag(indpro,18) + lag(indpro,19) + lag(indpro,20) +
+                 lag(indpro,21) + lag(indpro,22) + lag(indpro,23))
+                
+                 
+  )
+tidy(fitPC)
+accuracy(fitPC)
+```
+
+# Analyzing Residuals
+
+  One of the first methods of evaluating the models is to consider the residuals. Below are plots of the residuals of the model that uses unemployment rate as an indicator. These graphs indicate that this model is not likely to be a good fit. In the top graph, we can see that the variation of the residuals is not very constant over time. In the second graph, we can see that the residuals are correlated with one another, therefore the shocks are not independent. This means that there is correlation in the data that is not accounted for in the model. Finally, we can see in the third plot that the residuals do not have a normal distribution. 
+	In deeper analysis, we found that each model’s residuals had the same issues as the example below. This is not a great first sign, but there are a couple more methods we can use to evaluate the forecasting models.  
+
+```{r evaluating residuals, warning = FALSE}
+fitPC %>% select(mUNRATE) %>% gg_tsresiduals()
+```
+
+
+```{r fitting ensemble}
+mEnsemble <- fitPC %>% mutate(combo = (mUNRATE + mEXPINF1YR + mIPMAN + mINDPRO)/4)
+```
+
+```{r forecast}
+fc_inflate <- mEnsemble %>% forecast(new_data = test_data)
+```
+
+# Evaluating Forecast Accuracy
+
+  The table below contains the accuracy statistics for each forecasting model. There are many useful statistics included in this table, but we can look at the RMSE and MAPE to begin to get an indication of what the best model could be. The RMSE is the root mean squared error, which is a measurement the average difference between the values the forecast predicted, and the true values. A better fit has a lower RMSE. In the case of these models, 1-year expected inflation has the lowest RMSE, and the ensemble model (called “combo” in this case) has the second lowest. Similarly to the RMSE, a lower mean absolute percentage error (MAPE) is an indication of a better model. Among these models, the ensemble model has the lowest MAPE. Even in comparing each model’s statistics, it is important to note that across the board these figures are very high, which indicates that none of the models may predict inflation well. To take a more intuitive look at the fit of the models, we can next look at a graph of each forecast.
+
+
+```{r accuracy}
+accuracy(fc_inflate, my_vars)
+```
+
+# Illustrating Forecast Accuracy
+  The graph below illustrates how each model performs. The black line plots the inflation which we are trying to forecast, and each colored line corresponds to one of the proposed models. The models’ forecasts are fairly consistent through January 2021, but in the following year they seem to go awry. It is difficult from the graph alone to determine which model is the best fit, but there is one which we can probably rule out just visually. The model which uses the unemployment rate (in purple below) has a very wide confidence interval and seems to stray the furthest from the observed inflation. This is consistent with the statistics above, as this model also had the highest RMSE and MAPE. Among the remaining models, the ensemble (combo) model does appear to have the closest fit, although an argument could be made for multiple models based solely on this graph. 
+  
+```{r graphing models}
+fc_inflate %>% autoplot(filter(my_vars, year(Month) > 2016), level = c(95))
+```
+  
+# Conclusion 
+
+  After analyzing the accuracy of the models and evaluating the graphed forecasts, the story is consistent – none of these models seem to do the job of forecasting inflation well. Each model has its own downfalls, but overall, the “ensemble” model (the average of all of the models) would be the best choice of our available models to forecast inflation. 
+
